@@ -1,0 +1,79 @@
+1. Main Compute Unit
+
+Raspberry Pi 4B
+
+Recommended 4GB or 8GB RAM for faster inference.
+
+Quad-core ARM Cortex-A72 CPU @ 1.5GHz.
+
+USB 3.0 ports for faster camera and storage access.
+
+Optional: heatsink/fan for thermal stability during heavy inference.
+
+2. Camera
+
+USB Webcam (plug-and-play)
+
+Resolution: 720p or 1080p is sufficient for detection.
+
+FPS: At least 30fps for smoother real-time detection.
+
+Raspberry Pi Camera Module v2 or HQ Camera
+
+Resolution: 8MP–12MP
+
+Compatible with CSI interface for lower CPU usage.
+
+High-quality images help YOLOv3 detect anomalies more accurately.
+
+3. Storage
+
+microSD Card
+
+Minimum: 32GB (Class 10 or above)
+
+Recommended: 64GB–128GB for storing dataset, trained models, and logs.
+
+Preferably UHS-1 or UHS-3 for faster read/write.
+
+Optional: External SSD (USB 3.0)
+
+For large datasets or recording dashcam footage.
+
+Faster and more reliable than microSD for continuous operation.
+
+4. Power Supply
+
+Official Raspberry Pi 4 Power Supply
+
+5V, 3A USB-C.
+
+Ensure stable power to avoid crashes during heavy inference.
+
+5. Optional Display / Monitor
+
+HDMI monitor for development and testing.
+
+Not required for deployment if running headless (via SSH).
+
+6. Cooling
+
+Passive heatsinks or small fan for Raspberry Pi 4B.
+
+Necessary if running YOLOv3 continuously in real-time to prevent thermal throttling.
+
+7. Networking / Data Transfer
+
+Wi-Fi or Ethernet for uploading results or updating software.
+
+Optional: USB flash drive for dataset transfer.
+
+8. Mounting / Dashcam Integration (Optional)
+
+If deploying in a car:
+
+Mount for camera.
+
+Secure Raspberry Pi enclosure.
+
+Proper cable management to avoid vibrations affecting camera feed.
