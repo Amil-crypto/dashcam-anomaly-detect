@@ -1,0 +1,5 @@
+The TFLite model is generated and saved by the training code at exported_model/road_anomaly_detector.tflite.
+This is a binary file (not code). After running the training script, copy this file to your Raspberry Pi 4B.
+The model is int8 quantized for efficiency on the Pi's ARM CPU.
+Note: YOLOv3 TFLite inference may require adjustments if the output shapes don't match; verify with interpreter.get_output_details().
+For further optimization, consider using the Raspberry Pi's GPU if available, but TFLite CPU is sufficient for basic use. If you have a Coral Edge TPU, re-convert the model with Edge TPU compiler and use the delegate
