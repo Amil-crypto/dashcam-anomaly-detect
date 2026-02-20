@@ -1,120 +1,156 @@
 import os
 import numpy as np
+import pandas as pd
 import tensorflow as tf
-
-tf.get_logger().setLevel('ERROR')
-from absl import logging
-logging.set_verbosity(logging.ERROR)
-import matplotlib.pyplot as plt
+from PIL import Image
 
 IMAGE_DIR = "dataset/images"
 ANNOTATION_DIR = "dataset/annotations"
 LABEL_MAP = "dataset/label_map.txt"
-
+TFRECORD_DIR = "data"
 TFLITE_MODEL_PATH = "exported_model/road_anomaly_detector.tflite"
-BATCH_SIZE = 2  
-EPOCHS = 1  
-IMG_SIZE = (224, 224)  
+BATCH_SIZE = 4
+EPOCHS = 10
+IMG_SIZE = (416, 416)
+NUM_CLASSES = 1
+
 os.makedirs(IMAGE_DIR, exist_ok=True)
 os.makedirs(ANNOTATION_DIR, exist_ok=True)
+os.makedirs(TFRECORD_DIR, exist_ok=True)
 
 with open(LABEL_MAP, 'w') as f:
     f.write("anomaly\n")
 
-for i in range(5):
- 
-    img = np.random.uniform(0, 1, size=(IMG_SIZE[0], IMG_SIZE[1], 3))
-    plt.imsave(os.path.join(IMAGE_DIR, f"img{i}.jpg"), img)
+with open('data/anomaly.names', 'w') as f:
+    f.write("anomaly\n")
 
+for i in range(5):
+    img = np.random.uniform(0, 1, size=(IMG_SIZE[0], IMG_SIZE[1], 3)) * 255
+    img = Image.fromarray(img.astype(np.uint8))
+    img_path = os.path.join(IMAGE_DIR, f"img{i}.jpg")
+    img.save(img_path)
+    
     if i % 2 == 0:
         with open(os.path.join(ANNOTATION_DIR, f"img{i}.txt"), 'w') as f:
-            f.write("0 0.5 0.5 0.5 0.5\n") 
+            f.write("0 0.5 0.5 0.5 0.5\n")
+            f.write("0 0.3 0.3 0.2 0.2\n")
 
-def load_dataset(image_dir, annotation_dir, img_size=(224, 224)):
-    """
-    Loads images and bounding boxes from dataset directory.
-    Assumes at most one object per image for simplicity.
-    Returns numpy arrays: images, boxes, labels
-    """
-    images = []
-    boxes = []
-    labels = []
+def yolo_to_csv(image_dir, annotation_dir, output_csv):
+    data = []
     for img_file in os.listdir(image_dir):
         if not img_file.endswith((".jpg", ".png")):
             continue
         img_path = os.path.join(image_dir, img_file)
-        img = tf.keras.preprocessing.image.load_img(img_path, target_size=img_size)
-        img_array = tf.keras.preprocessing.image.img_to_array(img) / 255.0
-        images.append(img_array)
+        img = Image.open(img_path)
+        width, height = img.size
         ann_file = os.path.join(annotation_dir, img_file.replace(".jpg", ".txt").replace(".png", ".txt"))
-        box = [0.0, 0.0, 0.0, 0.0]
-        label = 0  
         if os.path.exists(ann_file):
             with open(ann_file, "r") as f:
-                ann_lines = f.readlines()
-                if ann_lines:
-            
-                    parts = list(map(float, ann_lines[0].strip().split()))
-                    class_id = int(parts[0]) + 1
+                for line in f.readlines():
+                    parts = list(map(float, line.strip().split()))
+                    class_id = int(parts[0])
                     x_center, y_center, w, h = parts[1:]
-                  
-                    ymin = y_center - h / 2
-                    xmin = x_center - w / 2
-                    ymax = y_center + h / 2
-                    xmax = x_center + w / 2
-                    box = [ymin, xmin, ymax, xmax]
-                    label = class_id
-        boxes.append(box)
-        labels.append(label)
-    return np.array(images, dtype=np.float32), np.array(boxes, dtype=np.float32), np.array(labels, dtype=np.int32)
+                    xmin = int((x_center - w / 2) * width)
+                    xmax = int((x_center + w / 2) * width)
+                    ymin = int((y_center - h / 2) * height)
+                    ymax = int((y_center + h / 2) * height)
+                    class_name = "anomaly"
+                    data.append([img_file, width, height, class_name, xmin, ymin, xmax, ymax])
+    df = pd.DataFrame(data, columns=['filename', 'width', 'height', 'class', 'xmin', 'ymin', 'xmax', 'ymax'])
+    df.to_csv(output_csv, index=None)
+    print(f"CSV saved to {output_csv}")
 
+yolo_to_csv(IMAGE_DIR, ANNOTATION_DIR, 'data/train.csv')
 
-images, boxes, labels = load_dataset(IMAGE_DIR, ANNOTATION_DIR, IMG_SIZE)
-print(f"Images shape: {images.shape}, Boxes shape: {boxes.shape}, Labels shape: {labels.shape}")
+os.system('cp data/train.csv data/test.csv')
 
+def class_text_to_int(row_label):
+    if row_label == 'anomaly':
+        return 1
+    else:
+        return 0
 
-def create_model(img_size=(224, 224, 3), num_classes=1, alpha=0.35):
-    """
-    Creates a simple object detection model (Tiny MobileNetV2-based)
-    Using smaller alpha for lighter model
-    """
-    base_model = tf.keras.applications.MobileNetV2(input_shape=img_size, alpha=alpha, include_top=False, weights=None)  
-    base_model.trainable = False
-    x = tf.keras.layers.Conv2D(128, (3, 3), activation='relu', padding='same')(base_model.output)  
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    
-    bbox_output = tf.keras.layers.Dense(4, activation='sigmoid', name='bbox')(x)
-    
+def create_tf_example(group, path):
+    with tf.io.gfile.GFile(os.path.join(path, '{}'.format(group.filename.iloc[0])), 'rb') as fid:
+        encoded_jpg = fid.read()
+    encoded_jpg_io = tf.io.BytesIO(encoded_jpg)
+    image = Image.open(encoded_jpg_io)
+    width, height = image.size
 
-    class_output = tf.keras.layers.Dense(num_classes, activation='softmax', name='class')(x)
-    
-    model = tf.keras.models.Model(inputs=base_model.input, outputs=[bbox_output, class_output])
-    return model
+    filename = group.filename.iloc[0].encode('utf8')
+    image_format = b'jpg'
+    xmins = []
+    xmaxs = []
+    ymins = []
+    ymaxs = []
+    classes_text = []
+    classes = []
 
+    for index, row in group.iterrows():
+        xmins.append(row['xmin'] / width)
+        xmaxs.append(row['xmax'] / width)
+        ymins.append(row['ymin'] / height)
+        ymaxs.append(row['ymax'] / height)
+        classes_text.append(row['class'].encode('utf8'))
+        classes.append(class_text_to_int(row['class']))
 
-with open(LABEL_MAP) as f:
-    num_object_classes = len(f.readlines())
-num_classes = num_object_classes + 1 
+    tf_example = tf.train.Example(features=tf.train.Features(feature={
+        'image/height': tf.train.Feature(int64_list=tf.train.Int64List(value=[height])),
+        'image/width': tf.train.Feature(int64_list=tf.train.Int64List(value=[width])),
+        'image/filename': tf.train.Feature(bytes_list=tf.train.BytesList(value=[filename])),
+        'image/source_id': tf.train.Feature(bytes_list=tf.train.BytesList(value=[filename])),
+        'image/encoded': tf.train.Feature(bytes_list=tf.train.BytesList(value=[encoded_jpg])),
+        'image/format': tf.train.Feature(bytes_list=tf.train.BytesList(value=[image_format])),
+        'image/object/bbox/xmin': tf.train.Feature(float_list=tf.train.FloatList(value=xmins)),
+        'image/object/bbox/xmax': tf.train.Feature(float_list=tf.train.FloatList(value=xmaxs)),
+        'image/object/bbox/ymin': tf.train.Feature(float_list=tf.train.FloatList(value=ymins)),
+        'image/object/bbox/ymax': tf.train.Feature(float_list=tf.train.FloatList(value=ymaxs)),
+        'image/object/class/text': tf.train.Feature(bytes_list=tf.train.BytesList(value=classes_text)),
+        'image/object/class/label': tf.train.Feature(int64_list=tf.train.Int64List(value=classes)),
+    }))
+    return tf_example
 
-model = create_model(img_size=(IMG_SIZE[0], IMG_SIZE[1], 3), num_classes=num_classes, alpha=0.35)
-model.summary()
+def main(csv_input, output_path, image_dir):
+    writer = tf.io.TFRecordWriter(output_path)
+    path = image_dir
+    examples = pd.read_csv(csv_input)
+    grouped = examples.groupby('filename')
+    for name, group in grouped:
+        tf_example = create_tf_example(group, path)
+        writer.write(tf_example.SerializeToString())
+    writer.close()
+    print('Successfully created the TFRecords: {}'.format(output_path))
 
+main('data/train.csv', 'data/train.tfrecord', IMAGE_DIR)
+main('data/test.csv', 'data/test.tfrecord', IMAGE_DIR)
 
-model.compile(optimizer='adam',
-              loss={'bbox': 'mse', 'class': 'sparse_categorical_crossentropy'},
-              metrics={'bbox': 'mse', 'class': 'accuracy'})
+os.system('wget https://pjreddie.com/media/files/yolov3.weights -O data/yolov3.weights')
+os.system('python convert.py --weights ./data/yolov3.weights --output ./checkpoints/yolov3.tf')
 
+os.system(f'python train.py \
+  --dataset ./data/train.tfrecord \
+  --val_dataset ./data/test.tfrecord \
+  --classes ./data/anomaly.names \
+  --num_classes {NUM_CLASSES} \
+  --mode fit --transfer darknet \
+  --batch_size {BATCH_SIZE} \
+  --epochs {EPOCHS} \
+  --weights ./checkpoints/yolov3.tf \
+  --weights_num_classes 80')
 
-model.fit(x=images, y={'bbox': boxes, 'class': labels},
-          batch_size=BATCH_SIZE,
-          epochs=EPOCHS)
-
+os.system('python export_tfserving.py --checkpoint ./checkpoints/yolov3_train_{EPOCHS}.tf --output ./serving/1')
 
 def representative_dataset():
-    for image in images:
-        yield [np.expand_dims(image, axis=0).astype(np.float32)]
+    dataset = tf.data.TFRecordDataset('data/train.tfrecord')
+    for raw_record in dataset.take(100):
+        example = tf.train.Example()
+        example.ParseFromString(raw_record.numpy())
+        img = tf.image.decode_jpeg(example.features.feature['image/encoded'].bytes_list.value[0])
+        img = tf.cast(img, tf.float32) / 255.0
+        img = tf.image.resize(img, [416, 416])
+        yield [tf.expand_dims(img, 0)]
 
-converter = tf.lite.TFLiteConverter.from_keras_model(model)
+converter = tf.lite.TFLiteConverter.from_saved_model('./serving/1')
 converter.optimizations = [tf.lite.Optimize.DEFAULT]
 converter.representative_dataset = representative_dataset
 converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
@@ -122,8 +158,7 @@ converter.inference_input_type = tf.int8
 converter.inference_output_type = tf.int8
 tflite_model = converter.convert()
 
-
 os.makedirs(os.path.dirname(TFLITE_MODEL_PATH), exist_ok=True)
-with open(TFLITE_MODEL_PATH, "wb") as f:
+with open(TFLITE_MODEL_PATH, 'wb') as f:
     f.write(tflite_model)
 print(f"TFLite model saved at {TFLITE_MODEL_PATH}")
