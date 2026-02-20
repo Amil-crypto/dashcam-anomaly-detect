@@ -1,0 +1,86 @@
+What is INT8 Quantization?
+
+Converts both weights and activations from 32-bit float to 8-bit integers.
+
+Reduces model size by ~4×.
+
+Speeds up inference significantly on CPU devices like Raspberry Pi.
+
+Requires a representative dataset to calibrate the model for accuracy.
+
+Steps for INT8 Quantization (TensorFlow / TFLite)
+1. Convert YOLOv3 to TensorFlow / Keras (if using PyTorch / Darknet)
+
+If you trained YOLOv3 in PyTorch, you need to export it to ONNX, then convert to TensorFlow Keras or SavedModel for TFLite:
+
+# Example: PyTorch -> ONNX
+python export.py --weights yolov3_custom.pt --img 320 --batch 1 --device 0 --dynamic --simplify --include onnx
+
+Then convert ONNX → TensorFlow SavedModel using onnx-tf or tf2onnx.
+
+2. Prepare Representative Dataset
+
+INT8 quantization needs sample inputs to determine proper scale for each layer.
+
+Use 100–500 images from your dataset (randomly sampled).
+
+import tensorflow as tf
+import numpy as np
+import glob
+from tensorflow.keras.preprocessing import image
+
+IMAGE_DIR = "dataset/images"  # sample images
+
+def representative_dataset():
+    files = glob.glob(IMAGE_DIR + "/*.jpg")[:100]  # first 100 images
+    for img_path in files:
+        img = image.load_img(img_path, target_size=(320, 320))
+        img_array = image.img_to_array(img)
+        img_array = np.expand_dims(img_array / 255.0, axis=0).astype(np.float32)
+        yield [img_array]
+3. Convert to INT8 TFLite
+# Load your trained Keras/SavedModel
+saved_model_dir = "models/yolov3_saved_model"
+
+converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
+
+# Enable full integer quantization
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+# Provide representative dataset
+converter.representative_dataset = representative_dataset
+
+# Ensure input/output are also int8
+converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+converter.inference_input_type = tf.uint8
+converter.inference_output_type = tf.uint8
+
+# Convert
+tflite_model = converter.convert()
+
+# Save TFLite model
+with open("models/yolov3_int8.tflite", "wb") as f:
+    f.write(tflite_model)
+
+print("INT8 TFLite model saved successfully!")
+4. Run INT8 Model on Raspberry Pi
+import tflite_runtime.interpreter as tflite
+import numpy as np
+import cv2
+
+interpreter = tflite.Interpreter(model_path="models/yolov3_int8.tflite")
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# Example: run on a single image
+img = cv2.imread("dataset/images/sample.jpg")
+img_resized = cv2.resize(img, (320, 320))
+input_data = np.expand_dims(img_resized, axis=0).astype(np.uint8)  # int8 input
+
+interpreter.set_tensor(input_details[0]['index'], input_data)
+interpreter.invoke()
+
+output_data = interpreter.get_tensor(output_details[0]['index'])
+print("Model output shape:", output_data.shape)
